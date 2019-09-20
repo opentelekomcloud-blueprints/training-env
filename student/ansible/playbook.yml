@@ -1,0 +1,183 @@
+# Preperation of Student Server
+#
+
+---
+- name: Configure Student Server
+  hosts: all
+  become: True
+  tasks:
+     - name: "Set German keymap for remote login"
+       shell: "localectl set-keymap --no-convert de"
+
+     - name: Update instance from repo
+       yum:
+         name: '*'
+         state: latest
+         update_cache: yes
+         skip_broken: yes
+       register: status_update
+
+     - debug:
+         var: status_update
+
+     - name: Install epel-Packages
+       yum:
+         name:
+          - epel-release
+         state: latest
+         update_cache: no
+
+     - name: "Update epel-release and dependencies"
+       yum:
+         name:               '*'
+         state:              latest
+         skip_broken:        yes
+
+     - name: "Install useful stuff"
+       yum:
+         name:
+          - epel-release
+          - vim
+          - htop
+          - nload
+          - tmux
+          - iftop
+          - iotop
+          - glances
+          - nfs-utils
+          - python-pip
+          - docker
+          - yum-plugin-copr
+          - snapd
+          - bash-completion
+         state:              latest
+         update_cache:       no
+
+     - name: Copy deamon.json template to /etc/docker
+       register: dockerconf
+       template:
+         src: docker.daemon.j2
+         dest: '/etc/docker/daemon.json'
+         owner: root
+         group: root
+
+     - name: Restart docker
+       systemd:
+         state: restarted
+         enabled: yes
+         name: docker
+       register: status_install
+
+     - name: be sure firewalld is disabled
+       systemd: 
+         name: firewalld 
+         enabled: no
+
+     - name: be sure firewalld is stopped
+       systemd: 
+         name: firewalld 
+         state: stopped 
+       ignore_errors: yes
+
+     - name: Make sure group wheel is existing
+       group:
+         name: wheel
+         state: present
+
+     - name: Allow 'wheel' group to have passwordless sudo
+       lineinfile:
+         path: /etc/sudoers
+         state: present
+         regexp: '^%wheel\s'
+         line: '%wheel ALL=(ALL) NOPASSWD: ALL'
+
+     - name: Add sudoers users to wheel group
+       user:
+         name: training 
+         groups: wheel 
+         append: yes 
+         state: present 
+         createhome: yes
+
+     - name: Create Group training
+       group:
+         name: training
+         state: present
+
+     - name: Create User training
+       user:
+         name: "training"
+         state: present
+         group: training
+         groups: wheel
+         shell: /bin/bash
+         comment: Student of PaaS Training
+
+     - name: Generate Directory /home/training/.ssh
+       file:
+         path: /home/training/.ssh
+         mode: 0700
+         state: directory
+         owner: training 
+         group: training 
+
+     - name: Copy authorization Certificate to mashine
+       copy:
+         src: ../../keys/student.pub
+         dest: /home/training/.ssh/authorized_keys
+         mode: 0600
+         owner: training 
+         group: training 
+
+     - name: Clone Git Repository 
+       git:
+         repo: https://github.com/thomaswetzler/simple_docker.git
+         dest: /home/training/simple_docker 
+
+     - name: Fix 'support_tools' permissions
+       file: 
+         path=/home/training/simple_docker
+         owner=training 
+         group=training 
+         recurse=yes
+
+     - name: Add User linux to dockerroot group
+       become: true
+       shell: usermod -aG dockerroot linux
+
+     - name: Add User training to dockerroot group
+       become: true
+       shell: usermod -aG dockerroot training
+
+     - name: Add User training to root group
+       become: true
+       shell: usermod -aG root training
+
+     - name: Make sure we have a 'wheel' group
+       group:
+         name: wheel
+         state: present
+
+     - name: Add user to sudoers file
+       lineinfile:
+         path: /etc/sudoers
+         regexp: '^root '
+         line: 'ansibleuser ALL=(ALL) NOPASSWD: ALL'
+         validate: 'visudo -cf %s'
+
+     - name: Restart System to reboot to newest Kernel
+       shell: "sleep 5 && reboot"
+       async: 1
+       poll: 0
+
+     - name: wait for 60 seconds
+       pause:
+         seconds: 60
+
+     - name: wait for the system to reboot
+       wait_for_connection:
+         connect_timeout: 20
+         sleep: 5
+         delay: 5
+         timeout: 180
+
